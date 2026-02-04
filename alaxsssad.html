@@ -9,7 +9,9 @@
         
         #game-container { display: flex; height: 100vh; width: 100vw; }
         #canvas-area { position: relative; flex-grow: 1; overflow: hidden; background: #333; }
-        canvas { display: block; }
+        
+        /* The canvas itself now fills the viewport and we use transforms to move/scale */
+        canvas { display: block; transform-origin: 0 0; } 
         
         /* Fixed UI Panels on Top of Game */
         .ui-panel { position: absolute; background: rgba(0,0,0,0.85); padding: 15px; border: 2px solid var(--lasd-gold); border-radius: 5px; color: white; }
@@ -34,7 +36,6 @@
     <div id="canvas-area">
         <canvas id="gameCanvas"></canvas>
         
-        <!-- UI elements are overlaid on top of the canvas via absolute positioning -->
         <div id="ui-hud" class="ui-panel">
             <h2 style="color: var(--lasd-gold); margin-top:0;">LASD DISPATCH</h2>
             <p>Budget: $<span id="funds" class="stat">5000</span></p>
@@ -67,6 +68,7 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const menu = document.getElementById('dispatch-menu');
 const uiFleet = document.getElementById('ui-fleet');
+const canvasArea = document.getElementById('canvas-area');
 
 let funds = 5000;
 let units = [];
@@ -75,25 +77,40 @@ let buildings = [];
 let selectedCrime = null;
 const GRID_CELL = 20;
 const ROAD_WIDTH = 60;
-const MAP_WIDTH = 2000; // Define a large map size
+const MAP_WIDTH = 2000;
 const MAP_HEIGHT = 1200;
 
-// Map Panning variables
+// Map Panning/Zooming variables
 let cameraX = 0;
 let cameraY = 0;
+let zoom = 1.0;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 2.0;
 let isDragging = false;
 let dragStartX, dragStartY;
 let canvasAreaRect;
 
 function resize() {
     canvasAreaRect = document.getElementById('canvas-area').getBoundingClientRect();
-    canvas.width = MAP_WIDTH; // Canvas is now the full size of the potential map
+    canvas.width = MAP_WIDTH; 
     canvas.height = MAP_HEIGHT;
-    // Set initial camera position to center of view
-    cameraX = (MAP_WIDTH - canvasAreaRect.width) / 2;
-    cameraY = (MAP_HEIGHT - canvasAreaRect.height) / 2;
+    // Update transforms when window resizes
+    updateCameraTransform();
     document.getElementById('funds').innerText = funds;
 }
+
+// Applies the CSS transform to the canvas
+function updateCameraTransform() {
+    // Constrain camera movement based on current zoom level and viewport size
+    const effectiveWidth = MAP_WIDTH * zoom;
+    const effectiveHeight = MAP_HEIGHT * zoom;
+
+    cameraX = Math.max(0, Math.min(cameraX, effectiveWidth - canvasAreaRect.width));
+    cameraY = Math.max(0, Math.min(cameraY, effectiveHeight - canvasAreaRect.height));
+
+    canvas.style.transform = `translate(${-cameraX}px, ${-cameraY}px) scale(${zoom})`;
+}
+
 
 const BUILDING_SPECS = {
     STATION:    { color: '#1b4d3e', minW: 4, maxW: 4, minH: 4, maxH: 4 },
@@ -106,7 +123,6 @@ const BUILDING_SPECS = {
 function initMap() {
     buildings = [];
     buildings.push({ x: 40, y: 40, w: 80, h: 80, type: 'STATION', color: '#1b4d3e' });
-
     function placeBuilding(type, count = 1) {
         const spec = BUILDING_SPECS[type];
         for (let i = 0; i < count; i++) {
@@ -114,161 +130,107 @@ function initMap() {
             for (let attempts = 0; attempts < 50; attempts++) {
                 const w = (Math.floor(Math.random() * (spec.maxW - spec.minW + 1)) + spec.minW) * GRID_CELL;
                 const h = (Math.floor(Math.random() * (spec.maxH - spec.minH + 1)) + spec.minH) * GRID_CELL;
-                // Use the entire map size for placement
                 const x = 150 + Math.random() * (MAP_WIDTH - 300 - w);
                 const y = 150 + Math.random() * (MAP_HEIGHT - 300 - h);
-                
                 const newB = { x, y, w, h, type, color: spec.color };
                 let overlap = false;
                 for (let existingB of buildings) {
-                    if (newB.x < existingB.x + existingB.w + 10 &&
-                        newB.x + newB.w + 10 > existingB.x &&
-                        newB.y < existingB.y + existingB.h + 10 &&
-                        newB.y + newB.h + 10 > existingB.y) {
-                        overlap = true;
-                        break;
+                    if (newB.x < existingB.x + existingB.w + 10 && newB.x + newB.w + 10 > existingB.x &&
+                        newB.y < existingB.y + existingB.h + 10 && newB.y + newB.h + 10 > existingB.y) {
+                        overlap = true; break;
                     }
                 }
-                if (!overlap) {
-                    buildings.push(newB);
-                    placed = true;
-                    break;
-                }
+                if (!overlap) { buildings.push(newB); placed = true; break; }
             }
         }
     }
-
     placeBuilding('PARK', 2);
     placeBuilding('MARKET', 2);
     placeBuilding('BANK', 1);
-    placeBuilding('APARTMENTS', 30); // More apartments for bigger map
+    placeBuilding('APARTMENTS', 30);
 }
 
-// ... (addUnit, buyVehicle, checkCollision functions remain the same) ...
 function addUnit(type, x, y) {
     const id = (type === 'Explorer' ? '240-E' : '240-V') + (units.length + 1);
     units.push({ id, type, x, y, status: 'IDLE', target: null, speed: type === 'Explorer' ? 3.5 : 3 });
     updateFleetUI();
 }
 function buyVehicle(type, cost) {
-    if (funds >= cost) {
-        funds -= cost;
-        document.getElementById('funds').innerText = funds;
-        addUnit(type, 80, 80);
-        addLog(`Purchased ${type}: ${units[units.length-1].id}`);
-    } else {
-        addLog("Not enough funds!");
-    }
+    if (funds >= cost) { funds -= cost; document.getElementById('funds').innerText = funds; addUnit(type, 80, 80); addLog(`Purchased ${type}: ${units[units.length-1].id}`); } else { addLog("Not enough funds!"); }
 }
 function checkCollision(newX, newY, size) {
     for (let b of buildings) {
-        if (newX < b.x + b.w + 2 && newX + size + 2 > b.x && 
-            newY < b.y + b.h + 2 && newY + size + 2 > b.y) {
-            return true;
-        }
+        if (newX < b.x + b.w + 2 && newX + size + 2 > b.x && newY < b.y + b.h + 2 && newY + size + 2 > b.y) { return true; }
     }
     return false;
 }
 
-
 function update() {
-    // ... (unit movement logic remains the same) ...
-     units.forEach(u => {
+    units.forEach(u => {
         if (u.target) {
-            const dx = u.target.x - u.x;
-            const dy = u.target.y - u.y;
-            const dist = Math.sqrt(dx*dx + dy*dy);
+            const dx = u.target.x - u.x; const dy = u.target.y - u.y; const dist = Math.sqrt(dx*dx + dy*dy);
             if (dist > 10) {
-                let vx = (dx / dist) * u.speed;
-                let vy = (dy / dist) * u.speed;
+                let vx = (dx / dist) * u.speed; let vy = (dy / dist) * u.speed;
                 if (!checkCollision(u.x + vx, u.y, 14)) u.x += vx;
                 if (!checkCollision(u.x, u.y + vy, 14)) u.y += vy;
             } else {
                 u.status = 'ON SCENE';
-                setTimeout(() => {
-                    crimes = crimes.filter(c => c !== u.target);
-                    u.target = null;
-                    u.status = 'IDLE';
-                    updateFleetUI();
-                }, 5000);
+                setTimeout(() => { crimes = crimes.filter(c => c !== u.target); u.target = null; u.status = 'IDLE'; updateFleetUI(); }, 5000);
             }
         }
     });
 
-    if (Math.random() < 0.005) spawnCrime();
+    // Reverted spawn rate to original low value (0.2% chance per frame)
+    if (Math.random() < 0.002) spawnCrime(); 
     document.getElementById('crimeCount').innerText = crimes.length;
 }
 
-// 4. DRAWING WITH CAMERA OFFSET
 function draw() {
+    // Note: All drawing happens in "world space" (MAP_WIDTH x MAP_HEIGHT),
+    // the CSS transform handles making it visible on screen.
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw Roads
     ctx.fillStyle = '#444';
     for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.fillRect(i - ROAD_WIDTH/2, 0, ROAD_WIDTH, canvas.height); }
     for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.fillRect(0, i - ROAD_WIDTH/2, canvas.width, ROAD_WIDTH); }
-
-    // Draw dashed yellow center lines
-    ctx.strokeStyle = '#FFD700';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2;
     for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
     for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke(); }
     ctx.setLineDash([]);
 
-    // Draw Buildings
     buildings.forEach(b => {
-        ctx.fillStyle = b.color;
-        ctx.fillRect(b.x, b.y, b.w, b.h);
-        ctx.strokeStyle = "black";
-        ctx.strokeRect(b.x, b.y, b.w, b.h);
-        ctx.fillStyle = "white";
-        ctx.font = "10px Arial";
-        ctx.fillText(b.type, b.x + 5, b.y + 15);
+        ctx.fillStyle = b.color; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = "black"; ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = "white"; ctx.font = "10px Arial"; ctx.fillText(b.type, b.x + 5, b.y + 15);
     });
 
-    // Draw Crimes
     crimes.forEach(c => {
-        ctx.fillStyle = "red";
-        ctx.beginPath(); ctx.arc(c.x, c.y, 10, 0, Math.PI*2); ctx.fill();
-        ctx.strokeStyle = "white"; ctx.stroke();
+        ctx.fillStyle = "red"; ctx.beginPath(); ctx.arc(c.x, c.y, 10, 0, Math.PI*2); ctx.fill(); ctx.strokeStyle = "white"; ctx.stroke();
     });
 
-    // Draw Units
     units.forEach(u => {
         ctx.fillStyle = u.type === 'Explorer' ? '#fff' : 'var(--lasd-gold)';
-        ctx.fillRect(u.x-7, u.y-7, 14, 14);
-        ctx.strokeRect(u.x-7, u.y-7, 14, 14);
+        ctx.fillRect(u.x-7, u.y-7, 14, 14); ctx.strokeRect(u.x-7, u.y-7, 14, 14);
     });
 
     update();
-    requestAnimationFrame(draw);
 }
 
 function spawnCrime() {
     for (let attempts = 0; attempts < 50; attempts++) {
         const x = 150 + Math.random() * (MAP_WIDTH - 300);
         const y = 150 + Math.random() * (MAP_HEIGHT - 300);
-        if (!checkCollision(x, y, 20)) {
-            crimes.push({ x, y });
-            addLog(`Crime spawned at ${Math.floor(x)}, ${Math.floor(y)}`);
-            return;
-        }
+        if (!checkCollision(x, y, 20)) { crimes.push({ x, y }); addLog(`Crime spawned at ${Math.floor(x)}, ${Math.floor(y)}`); return; }
     }
 }
 
-// 5. MOUSE INTERACTION & PANNING LOGIC
-// Map Panning Event Handlers
-document.getElementById('canvas-area').addEventListener('mousedown', (e) => {
-    // Only capture right clicks for dragging (button 2)
-    if (e.button === 2) { 
-        isDragging = true;
-        dragStartX = e.clientX + cameraX;
-        dragStartY = e.clientY + cameraY;
-        document.getElementById('canvas-area').style.cursor = 'grabbing';
-    } else if (e.button === 0) {
-        // Handle left click for crime interaction
-        const mx = e.clientX - canvasAreaRect.left + cameraX;
-        const my = e.clientY - canvasAreaRect.top + cameraY;
+// 5. MOUSE INTERACTION & CAMERA LOGIC
+canvasArea.addEventListener('mousedown', (e) => {
+    // Left click handling
+    if (e.button === 0) {
+        // Translate click coordinates into world coordinates considering zoom and pan
+        const mx = (e.clientX - canvasAreaRect.left) / zoom + cameraX / zoom;
+        const my = (e.clientY - canvasAreaRect.top) / zoom + cameraY / zoom;
+
         selectedCrime = crimes.find(c => Math.sqrt((mx-c.x)**2 + (my-c.y)**2) < 20);
         if (selectedCrime) {
             menu.style.display = 'block';
@@ -278,32 +240,49 @@ document.getElementById('canvas-area').addEventListener('mousedown', (e) => {
         } else {
             closeDispatch();
         }
+    } 
+    // Right click handling for drag start
+    else if (e.button === 2) {
+        isDragging = true;
+        dragStartX = e.clientX + cameraX;
+        dragStartY = e.clientY + cameraY;
+        canvasArea.style.cursor = 'grabbing';
     }
 });
 
 window.addEventListener('mousemove', (e) => {
     if (isDragging) {
-        // Calculate new camera position and constrain within map bounds
         cameraX = dragStartX - e.clientX;
         cameraY = dragStartY - e.clientY;
-
-        cameraX = Math.max(0, Math.min(cameraX, MAP_WIDTH - canvasAreaRect.width));
-        cameraY = Math.max(0, Math.min(cameraY, MAP_HEIGHT - canvasAreaRect.height));
-        
-        // Apply transform to the canvas container to simulate panning
-        document.getElementById('canvas-area').style.transform = `translate(${-cameraX}px, ${-cameraY}px)`;
+        updateCameraTransform(); // Constrains movement
     }
 });
 
 window.addEventListener('mouseup', (e) => {
     if (e.button === 2) {
         isDragging = false;
-        document.getElementById('canvas-area').style.cursor = 'crosshair';
+        canvasArea.style.cursor = 'crosshair';
     }
 });
 
+// Zoom using mouse wheel
+canvasArea.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const zoomFactor = -e.deltaY * 0.001;
+    const oldZoom = zoom;
+    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom + zoomFactor));
+
+    // Calculate new camera position so we zoom towards the cursor position
+    const mouseX = e.clientX - canvasAreaRect.left;
+    const mouseY = e.clientY - canvasAreaRect.top;
+    cameraX += (mouseX / oldZoom) * (oldZoom - zoom);
+    cameraY += (mouseY / oldZoom) * (oldZoom - zoom);
+    
+    updateCameraTransform();
+});
+
 // Prevent default right-click context menu within the canvas area
-document.getElementById('canvas-area').addEventListener('contextmenu', (e) => e.preventDefault());
+canvasArea.addEventListener('contextmenu', (e) => e.preventDefault());
 
 
 // ... (assignNearest, assignAll, closeDispatch, updateFleetUI, addLog functions remain the same) ...
@@ -351,12 +330,9 @@ initMap();
 addUnit('Crown Vic', 80, 80);
 addUnit('Crown Vic', 80, 80);
 addUnit('Explorer', 80, 80);
-// Instead of calling draw() repeatedly via requestAnimationFrame,
-// we must update the position of the canvas within the view because of the panning CSS transform
+
 function gameLoop() {
-    draw(); // Draw calls update(), which runs game logic
-    // We update the transform in the mouse move listener now, 
-    // but the requestAnimationFrame is still needed for game updates
+    draw(); 
     requestAnimationFrame(gameLoop); 
 }
 gameLoop();
