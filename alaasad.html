@@ -2,20 +2,27 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>LASD: Dispatch Advanced</title>
+    <title>LASD: Dispatch Pan-able Map</title>
     <style>
         :root { --lasd-tan: #D2B48C; --lasd-gold: #FFD700; --lasd-green: #1b4d3e; }
-        body { margin: 0; overflow: hidden; font-family: 'Arial', sans-serif; background: #222; color: white; }
+        body { margin: 0; overflow: hidden; font-family: 'Arial', sans-serif; background: #222; color: white; user-select: none; }
         
         #game-container { display: flex; height: 100vh; width: 100vw; }
-        #canvas-area { position: relative; flex-grow: 1; height: calc(100vh - 120px); overflow: hidden; cursor: crosshair; }
-        canvas { background: #333; display: block; }
-        #ui-shop { width: 240px; background: #2d3436; border-left: 3px solid var(--lasd-gold); padding: 15px; box-sizing: border-box; }
+        #canvas-area { position: relative; flex-grow: 1; overflow: hidden; background: #333; }
+        canvas { display: block; }
+        
+        /* Fixed UI Panels on Top of Game */
+        .ui-panel { position: absolute; background: rgba(0,0,0,0.85); padding: 15px; border: 2px solid var(--lasd-gold); border-radius: 5px; color: white; }
+        #ui-hud { top: 10px; left: 10px; z-index: 5; }
+        #ui-log { bottom: 10px; left: 10px; width: 300px; height: 120px; overflow-y: auto; font-size: 12px; z-index: 5; }
+        #ui-shop { top: 0; right: 0; width: 240px; height: 100vh; background: #2d3436; border-left: 3px solid var(--lasd-gold); padding: 15px; box-sizing: border-box; z-index: 10; }
+        #ui-fleet { bottom: 0; left: 0; right: 240px; height: 120px; background: #111; border-top: 3px solid var(--lasd-gold); display: flex; padding: 10px; overflow-x: auto; box-sizing: border-box; z-index: 5; }
+        
         .shop-btn { width: 100%; padding: 12px; margin: 10px 0; background: var(--lasd-gold); border: 2px solid black; font-weight: bold; cursor: pointer; }
-        #ui-fleet { position: absolute; bottom: 0; left: 0; width: 100%; height: 120px; background: #111; border-top: 3px solid var(--lasd-gold); display: flex; padding: 10px; overflow-x: auto; box-sizing: border-box; }
         .unit-card { min-width: 140px; background: #333; border: 1px solid #555; margin-right: 10px; padding: 8px; font-size: 12px; border-radius: 4px; }
         .status-idle { border-left: 5px solid #2ecc71; }
         .status-busy { border-left: 5px solid #e74c3c; }
+        
         #dispatch-menu { position: absolute; display: none; background: rgba(0,0,0,0.95); border: 2px solid var(--lasd-gold); padding: 10px; z-index: 100; border-radius: 5px; }
         .dispatch-btn { display: block; width: 100%; margin: 5px 0; padding: 8px; background: #444; color: white; border: 1px solid var(--lasd-gold); cursor: pointer; }
         .stat { color: var(--lasd-gold); font-weight: bold; }
@@ -24,24 +31,28 @@
 <body>
 
 <div id="game-container">
-    <div style="flex-grow:1; position:relative;">
-        <div id="canvas-area">
-            <canvas id="gameCanvas"></canvas>
-            <div id="dispatch-menu">
-                <div style="font-size:12px; margin-bottom:5px; color:var(--lasd-gold)">DISPATCH UNIT:</div>
-                <button class="dispatch-btn" onclick="assignNearest()">Nearest Unit</button>
-                <button class="dispatch-btn" onclick="assignAll()">Send All Units</button>
-                <button class="dispatch-btn" onclick="closeDispatch()" style="background:red">Cancel</button>
-            </div>
-        </div>
+    <div id="canvas-area">
+        <canvas id="gameCanvas"></canvas>
         
-        <div id="ui-fleet"></div>
+        <!-- UI elements are overlaid on top of the canvas via absolute positioning -->
+        <div id="ui-hud" class="ui-panel">
+            <h2 style="color: var(--lasd-gold); margin-top:0;">LASD DISPATCH</h2>
+            <p>Budget: $<span id="funds" class="stat">5000</span></p>
+            <p>Active Calls: <span id="crimeCount" class="stat">0</span></p>
+        </div>
+
+        <div id="ui-log" class="ui-panel"></div>
+
+        <div id="dispatch-menu">
+            <div style="font-size:12px; margin-bottom:5px; color:var(--lasd-gold)">DISPATCH UNIT:</div>
+            <button class="dispatch-btn" onclick="assignNearest()">Nearest Unit</button>
+            <button class="dispatch-btn" onclick="assignAll()">Send All Units</button>
+            <button class="dispatch-btn" onclick="closeDispatch()" style="background:red">Cancel</button>
+        </div>
     </div>
 
     <div id="ui-shop">
-        <h2 style="color: var(--lasd-gold); margin-top:0;">LASD HQ</h2>
-        <p>Budget: $<span id="funds" class="stat">5000</span></p>
-        <hr>
+        <h2 style="color: var(--lasd-gold); margin-top:0;">VEHICLE SHOP</h2>
         <p>AVAILABLE VEHICLES:</p>
         <button class="shop-btn" onclick="buyVehicle('Crown Vic', 1200)">Crown Victoria ($1200)</button>
         <button class="shop-btn" onclick="buyVehicle('Explorer', 2500)">Ford Explorer ($2500)</button>
@@ -49,10 +60,13 @@
     </div>
 </div>
 
+<div id="ui-fleet"></div>
+
 <script>
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 const menu = document.getElementById('dispatch-menu');
+const uiFleet = document.getElementById('ui-fleet');
 
 let funds = 5000;
 let units = [];
@@ -60,13 +74,25 @@ let crimes = [];
 let buildings = [];
 let selectedCrime = null;
 const GRID_CELL = 20;
-const ROAD_WIDTH = 60; // Wide roads
-const SPAWN_AREA = { x: 150, y: 150, w: 700, h: 500 };
+const ROAD_WIDTH = 60;
+const MAP_WIDTH = 2000; // Define a large map size
+const MAP_HEIGHT = 1200;
+
+// Map Panning variables
+let cameraX = 0;
+let cameraY = 0;
+let isDragging = false;
+let dragStartX, dragStartY;
+let canvasAreaRect;
 
 function resize() {
-    const box = document.getElementById('canvas-area').getBoundingClientRect();
-    canvas.width = box.width;
-    canvas.height = box.height;
+    canvasAreaRect = document.getElementById('canvas-area').getBoundingClientRect();
+    canvas.width = MAP_WIDTH; // Canvas is now the full size of the potential map
+    canvas.height = MAP_HEIGHT;
+    // Set initial camera position to center of view
+    cameraX = (MAP_WIDTH - canvasAreaRect.width) / 2;
+    cameraY = (MAP_HEIGHT - canvasAreaRect.height) / 2;
+    document.getElementById('funds').innerText = funds;
 }
 
 const BUILDING_SPECS = {
@@ -88,8 +114,9 @@ function initMap() {
             for (let attempts = 0; attempts < 50; attempts++) {
                 const w = (Math.floor(Math.random() * (spec.maxW - spec.minW + 1)) + spec.minW) * GRID_CELL;
                 const h = (Math.floor(Math.random() * (spec.maxH - spec.minH + 1)) + spec.minH) * GRID_CELL;
-                const x = SPAWN_AREA.x + Math.random() * (SPAWN_AREA.w - w);
-                const y = SPAWN_AREA.y + Math.random() * (SPAWN_AREA.h - h);
+                // Use the entire map size for placement
+                const x = 150 + Math.random() * (MAP_WIDTH - 300 - w);
+                const y = 150 + Math.random() * (MAP_HEIGHT - 300 - h);
                 
                 const newB = { x, y, w, h, type, color: spec.color };
                 let overlap = false;
@@ -114,15 +141,15 @@ function initMap() {
     placeBuilding('PARK', 2);
     placeBuilding('MARKET', 2);
     placeBuilding('BANK', 1);
-    placeBuilding('APARTMENTS', 15);
+    placeBuilding('APARTMENTS', 30); // More apartments for bigger map
 }
 
+// ... (addUnit, buyVehicle, checkCollision functions remain the same) ...
 function addUnit(type, x, y) {
     const id = (type === 'Explorer' ? '240-E' : '240-V') + (units.length + 1);
     units.push({ id, type, x, y, status: 'IDLE', target: null, speed: type === 'Explorer' ? 3.5 : 3 });
     updateFleetUI();
 }
-
 function buyVehicle(type, cost) {
     if (funds >= cost) {
         funds -= cost;
@@ -133,10 +160,8 @@ function buyVehicle(type, cost) {
         addLog("Not enough funds!");
     }
 }
-
 function checkCollision(newX, newY, size) {
     for (let b of buildings) {
-        // Reduced buffer to 2px for tighter street driving simulation
         if (newX < b.x + b.w + 2 && newX + size + 2 > b.x && 
             newY < b.y + b.h + 2 && newY + size + 2 > b.y) {
             return true;
@@ -145,17 +170,17 @@ function checkCollision(newX, newY, size) {
     return false;
 }
 
+
 function update() {
-    units.forEach(u => {
+    // ... (unit movement logic remains the same) ...
+     units.forEach(u => {
         if (u.target) {
             const dx = u.target.x - u.x;
             const dy = u.target.y - u.y;
             const dist = Math.sqrt(dx*dx + dy*dy);
-
             if (dist > 10) {
                 let vx = (dx / dist) * u.speed;
                 let vy = (dy / dist) * u.speed;
-
                 if (!checkCollision(u.x + vx, u.y, 14)) u.x += vx;
                 if (!checkCollision(u.x, u.y + vy, 14)) u.y += vy;
             } else {
@@ -169,28 +194,28 @@ function update() {
             }
         }
     });
+
     if (Math.random() < 0.005) spawnCrime();
+    document.getElementById('crimeCount').innerText = crimes.length;
 }
 
-// FIX: Drawing detailed streets
+// 4. DRAWING WITH CAMERA OFFSET
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // 1. Draw solid dark gray roads (base layer)
+    // Draw Roads
     ctx.fillStyle = '#444';
     for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.fillRect(i - ROAD_WIDTH/2, 0, ROAD_WIDTH, canvas.height); }
     for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.fillRect(0, i - ROAD_WIDTH/2, canvas.width, ROAD_WIDTH); }
 
-    // 2. Draw dashed yellow center lines
-    ctx.strokeStyle = '#FFD700'; // LASD Gold/Yellow
+    // Draw dashed yellow center lines
+    ctx.strokeStyle = '#FFD700';
     ctx.lineWidth = 2;
-    ctx.setLineDash([10, 10]);
     for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
     for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke(); }
-    ctx.setLineDash([]); // Reset line dash for other drawings
+    ctx.setLineDash([]);
 
-
-    // 3. Draw Buildings (they now sit on grass/empty land between roads)
+    // Draw Buildings
     buildings.forEach(b => {
         ctx.fillStyle = b.color;
         ctx.fillRect(b.x, b.y, b.w, b.h);
@@ -201,14 +226,14 @@ function draw() {
         ctx.fillText(b.type, b.x + 5, b.y + 15);
     });
 
-    // 4. Draw Crimes
+    // Draw Crimes
     crimes.forEach(c => {
         ctx.fillStyle = "red";
         ctx.beginPath(); ctx.arc(c.x, c.y, 10, 0, Math.PI*2); ctx.fill();
         ctx.strokeStyle = "white"; ctx.stroke();
     });
 
-    // 5. Draw Units
+    // Draw Units
     units.forEach(u => {
         ctx.fillStyle = u.type === 'Explorer' ? '#fff' : 'var(--lasd-gold)';
         ctx.fillRect(u.x-7, u.y-7, 14, 14);
@@ -221,32 +246,67 @@ function draw() {
 
 function spawnCrime() {
     for (let attempts = 0; attempts < 50; attempts++) {
-        const x = SPAWN_AREA.x + Math.random() * (SPAWN_AREA.w - 50);
-        const y = SPAWN_AREA.y + Math.random() * (SPAWN_AREA.h - 50);
+        const x = 150 + Math.random() * (MAP_WIDTH - 300);
+        const y = 150 + Math.random() * (MAP_HEIGHT - 300);
         if (!checkCollision(x, y, 20)) {
             crimes.push({ x, y });
             addLog(`Crime spawned at ${Math.floor(x)}, ${Math.floor(y)}`);
             return;
         }
     }
-    addLog("Warning: Could not find clear spot for crime.");
 }
 
-// 5. DISPATCH INTERFACE
-canvas.addEventListener('mousedown', (e) => {
-    const rect = canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left;
-    const my = e.clientY - rect.top;
-    selectedCrime = crimes.find(c => Math.sqrt((mx-c.x)**2 + (my-c.y)**2) < 20);
-    if (selectedCrime) {
-        menu.style.display = 'block';
-        menu.style.left = mx + 'px';
-        menu.style.top = my + 'px';
-    } else {
-        closeDispatch();
+// 5. MOUSE INTERACTION & PANNING LOGIC
+// Map Panning Event Handlers
+document.getElementById('canvas-area').addEventListener('mousedown', (e) => {
+    // Only capture right clicks for dragging (button 2)
+    if (e.button === 2) { 
+        isDragging = true;
+        dragStartX = e.clientX + cameraX;
+        dragStartY = e.clientY + cameraY;
+        document.getElementById('canvas-area').style.cursor = 'grabbing';
+    } else if (e.button === 0) {
+        // Handle left click for crime interaction
+        const mx = e.clientX - canvasAreaRect.left + cameraX;
+        const my = e.clientY - canvasAreaRect.top + cameraY;
+        selectedCrime = crimes.find(c => Math.sqrt((mx-c.x)**2 + (my-c.y)**2) < 20);
+        if (selectedCrime) {
+            menu.style.display = 'block';
+            // Position menu relative to the viewport/canvas-area div
+            menu.style.left = (e.clientX - canvasAreaRect.left) + 'px';
+            menu.style.top = (e.clientY - canvasAreaRect.top) + 'px';
+        } else {
+            closeDispatch();
+        }
     }
 });
 
+window.addEventListener('mousemove', (e) => {
+    if (isDragging) {
+        // Calculate new camera position and constrain within map bounds
+        cameraX = dragStartX - e.clientX;
+        cameraY = dragStartY - e.clientY;
+
+        cameraX = Math.max(0, Math.min(cameraX, MAP_WIDTH - canvasAreaRect.width));
+        cameraY = Math.max(0, Math.min(cameraY, MAP_HEIGHT - canvasAreaRect.height));
+        
+        // Apply transform to the canvas container to simulate panning
+        document.getElementById('canvas-area').style.transform = `translate(${-cameraX}px, ${-cameraY}px)`;
+    }
+});
+
+window.addEventListener('mouseup', (e) => {
+    if (e.button === 2) {
+        isDragging = false;
+        document.getElementById('canvas-area').style.cursor = 'crosshair';
+    }
+});
+
+// Prevent default right-click context menu within the canvas area
+document.getElementById('canvas-area').addEventListener('contextmenu', (e) => e.preventDefault());
+
+
+// ... (assignNearest, assignAll, closeDispatch, updateFleetUI, addLog functions remain the same) ...
 function assignNearest() {
     const idle = units.filter(u => u.status === 'IDLE');
     if (idle.length > 0) {
@@ -261,7 +321,6 @@ function assignNearest() {
     }
     closeDispatch();
 }
-
 function assignAll() {
     units.filter(u => u.status === 'IDLE').forEach(u => {
         u.target = selectedCrime;
@@ -270,24 +329,21 @@ function assignAll() {
     addLog(`All available units dispatched.`);
     closeDispatch();
 }
-
 function closeDispatch() { menu.style.display = 'none'; updateFleetUI(); }
-
 function updateFleetUI() {
-    const container = document.getElementById('ui-fleet');
-    container.innerHTML = '';
+    uiFleet.innerHTML = '';
     units.forEach(u => {
         const div = document.createElement('div');
         div.className = `unit-card ${u.status === 'IDLE' ? 'status-idle' : 'status-busy'}`;
         div.innerHTML = `<b>${u.id}</b><br>${u.type}<br><i>${u.status}</i>`;
-        container.appendChild(div);
+        uiFleet.appendChild(div);
     });
 }
-
 function addLog(t) {
     const l = document.getElementById('log');
     l.innerHTML = `> ${t}<br>` + l.innerHTML;
 }
+
 
 // Start
 resize();
@@ -295,7 +351,15 @@ initMap();
 addUnit('Crown Vic', 80, 80);
 addUnit('Crown Vic', 80, 80);
 addUnit('Explorer', 80, 80);
-draw();
+// Instead of calling draw() repeatedly via requestAnimationFrame,
+// we must update the position of the canvas within the view because of the panning CSS transform
+function gameLoop() {
+    draw(); // Draw calls update(), which runs game logic
+    // We update the transform in the mouse move listener now, 
+    // but the requestAnimationFrame is still needed for game updates
+    requestAnimationFrame(gameLoop); 
+}
+gameLoop();
 window.onresize = resize;
 </script>
 </body>
