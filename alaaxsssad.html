@@ -2,26 +2,30 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>LASD: Dispatch Pan-able Map</title>
+    <title>LASD: Dispatch Final</title>
     <style>
         :root { --lasd-tan: #D2B48C; --lasd-gold: #FFD700; --lasd-green: #1b4d3e; }
         body { margin: 0; overflow: hidden; font-family: 'Arial', sans-serif; background: #222; color: white; user-select: none; }
         
         #game-container { display: flex; height: 100vh; width: 100vw; }
         #canvas-area { position: relative; flex-grow: 1; overflow: hidden; background: #333; }
-        
-        /* The canvas itself now fills the viewport and we use transforms to move/scale */
         canvas { display: block; transform-origin: 0 0; } 
         
+        /* Main Menu Styling */
+        #main-menu { position: absolute; width: 100%; height: 100%; background-color: var(--lasd-tan); display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 50; }
+        #menu-title { font-size: 80px; color: var(--lasd-gold); -webkit-text-stroke: 3px black; text-shadow: 4px 4px 0px #000; margin-bottom: 40px; text-transform: uppercase; }
+        #play-btn { padding: 20px 60px; font-size: 30px; background-color: var(--lasd-gold); color: black; border: 5px solid black; cursor: pointer; font-weight: bold; }
+
         /* Fixed UI Panels on Top of Game */
-        .ui-panel { position: absolute; background: rgba(0,0,0,0.85); padding: 15px; border: 2px solid var(--lasd-gold); border-radius: 5px; color: white; }
+        .ui-panel { position: absolute; background: rgba(0,0,0,0.85); padding: 15px; border: 2px solid var(--lasd-gold); border-radius: 5px; color: white; display: none; }
         #ui-hud { top: 10px; left: 10px; z-index: 5; }
         #ui-log { bottom: 10px; left: 10px; width: 300px; height: 120px; overflow-y: auto; font-size: 12px; z-index: 5; }
-        #ui-shop { top: 0; right: 0; width: 240px; height: 100vh; background: #2d3436; border-left: 3px solid var(--lasd-gold); padding: 15px; box-sizing: border-box; z-index: 10; }
-        #ui-fleet { bottom: 0; left: 0; right: 240px; height: 120px; background: #111; border-top: 3px solid var(--lasd-gold); display: flex; padding: 10px; overflow-x: auto; box-sizing: border-box; z-index: 5; }
+        #ui-shop { top: 0; right: 0; width: 240px; height: 100vh; background: #2d3436; border-left: 3px solid var(--lasd-gold); padding: 15px; box-sizing: border-box; z-index: 10; display: none; }
+        #ui-fleet { bottom: 0; left: 0; right: 240px; height: 120px; background: #111; border-top: 3px solid var(--lasd-gold); display: none; padding: 10px; overflow-x: auto; box-sizing: border-box; z-index: 5; }
         
         .shop-btn { width: 100%; padding: 12px; margin: 10px 0; background: var(--lasd-gold); border: 2px solid black; font-weight: bold; cursor: pointer; }
-        .unit-card { min-width: 140px; background: #333; border: 1px solid #555; margin-right: 10px; padding: 8px; font-size: 12px; border-radius: 4px; }
+        .unit-card { min-width: 140px; background: #333; border: 1px solid #555; margin-right: 10px; padding: 8px; font-size: 12px; border-radius: 4px; cursor: pointer; }
+        .unit-card.selected { border: 2px solid white !important; background: #555; }
         .status-idle { border-left: 5px solid #2ecc71; }
         .status-busy { border-left: 5px solid #e74c3c; }
         
@@ -33,6 +37,12 @@
 <body>
 
 <div id="game-container">
+    <!-- Main Menu Overlay -->
+    <div id="main-menu">
+        <h1 id="menu-title">LASD: Dispatch</h1>
+        <button id="play-btn" onclick="startGame()">PLAY GAME</button>
+    </div>
+
     <div id="canvas-area">
         <canvas id="gameCanvas"></canvas>
         
@@ -70,44 +80,45 @@ const menu = document.getElementById('dispatch-menu');
 const uiFleet = document.getElementById('ui-fleet');
 const canvasArea = document.getElementById('canvas-area');
 
+let gameRunning = false;
 let funds = 5000;
 let units = [];
 let crimes = [];
 let buildings = [];
 let selectedCrime = null;
+let selectedUnit = null;
 const GRID_CELL = 20;
 const ROAD_WIDTH = 60;
 const MAP_WIDTH = 2000;
 const MAP_HEIGHT = 1200;
 
-// Map Panning/Zooming variables
-let cameraX = 0;
-let cameraY = 0;
-let zoom = 1.0;
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 2.0;
-let isDragging = false;
-let dragStartX, dragStartY;
-let canvasAreaRect;
+// Camera variables
+let cameraX = 0; let cameraY = 0; let zoom = 1.0; const MIN_ZOOM = 0.5; const MAX_ZOOM = 2.0;
+let isDragging = false; let dragStartX, dragStartY; let canvasAreaRect;
+
+function startGame() {
+    gameRunning = true;
+    document.getElementById('main-menu').style.display = 'none';
+    document.getElementById('ui-hud').style.display = 'block';
+    document.getElementById('ui-log').style.display = 'block';
+    document.getElementById('ui-shop').style.display = 'block';
+    document.getElementById('ui-fleet').style.display = 'flex';
+    resize();
+    initMap();
+    addUnit('Crown Vic', 80, 80); addUnit('Crown Vic', 80, 80); addUnit('Explorer', 80, 80);
+    gameLoop();
+}
 
 function resize() {
     canvasAreaRect = document.getElementById('canvas-area').getBoundingClientRect();
-    canvas.width = MAP_WIDTH; 
-    canvas.height = MAP_HEIGHT;
-    // Update transforms when window resizes
+    canvas.width = MAP_WIDTH; canvas.height = MAP_HEIGHT;
     updateCameraTransform();
     document.getElementById('funds').innerText = funds;
 }
-
-// Applies the CSS transform to the canvas
 function updateCameraTransform() {
-    // Constrain camera movement based on current zoom level and viewport size
-    const effectiveWidth = MAP_WIDTH * zoom;
-    const effectiveHeight = MAP_HEIGHT * zoom;
-
+    const effectiveWidth = MAP_WIDTH * zoom; const effectiveHeight = MAP_HEIGHT * zoom;
     cameraX = Math.max(0, Math.min(cameraX, effectiveWidth - canvasAreaRect.width));
     cameraY = Math.max(0, Math.min(cameraY, effectiveHeight - canvasAreaRect.height));
-
     canvas.style.transform = `translate(${-cameraX}px, ${-cameraY}px) scale(${zoom})`;
 }
 
@@ -136,18 +147,13 @@ function initMap() {
                 let overlap = false;
                 for (let existingB of buildings) {
                     if (newB.x < existingB.x + existingB.w + 10 && newB.x + newB.w + 10 > existingB.x &&
-                        newB.y < existingB.y + existingB.h + 10 && newB.y + newB.h + 10 > existingB.y) {
-                        overlap = true; break;
-                    }
+                        newB.y < existingB.y + existingB.h + 10 && newB.y + newB.h + 10 > existingB.y) { overlap = true; break; }
                 }
                 if (!overlap) { buildings.push(newB); placed = true; break; }
             }
         }
     }
-    placeBuilding('PARK', 2);
-    placeBuilding('MARKET', 2);
-    placeBuilding('BANK', 1);
-    placeBuilding('APARTMENTS', 30);
+    placeBuilding('PARK', 2); placeBuilding('MARKET', 2); placeBuilding('BANK', 1); placeBuilding('APARTMENTS', 30);
 }
 
 function addUnit(type, x, y) {
@@ -166,6 +172,7 @@ function checkCollision(newX, newY, size) {
 }
 
 function update() {
+    if (!gameRunning) return;
     units.forEach(u => {
         if (u.target) {
             const dx = u.target.x - u.x; const dy = u.target.y - u.y; const dist = Math.sqrt(dx*dx + dy*dy);
@@ -180,23 +187,18 @@ function update() {
         }
     });
 
-    // Reverted spawn rate to original low value (0.2% chance per frame)
     if (Math.random() < 0.002) spawnCrime(); 
     document.getElementById('crimeCount').innerText = crimes.length;
 }
 
 function draw() {
-    // Note: All drawing happens in "world space" (MAP_WIDTH x MAP_HEIGHT),
-    // the CSS transform handles making it visible on screen.
+    if (!gameRunning) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     ctx.fillStyle = '#444';
     for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.fillRect(i - ROAD_WIDTH/2, 0, ROAD_WIDTH, canvas.height); }
     for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.fillRect(0, i - ROAD_WIDTH/2, canvas.width, ROAD_WIDTH); }
-    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2;
-    for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
-    for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke(); }
-    ctx.setLineDash([]);
+    
 
     buildings.forEach(b => {
         ctx.fillStyle = b.color; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.strokeStyle = "black"; ctx.strokeRect(b.x, b.y, b.w, b.h);
@@ -210,6 +212,11 @@ function draw() {
     units.forEach(u => {
         ctx.fillStyle = u.type === 'Explorer' ? '#fff' : 'var(--lasd-gold)';
         ctx.fillRect(u.x-7, u.y-7, 14, 14); ctx.strokeRect(u.x-7, u.y-7, 14, 14);
+        if (selectedUnit === u) {
+            ctx.strokeStyle = "cyan";
+            ctx.lineWidth = 3;
+            ctx.strokeRect(u.x-9, u.y-9, 18, 18);
+        }
     });
 
     update();
@@ -225,67 +232,66 @@ function spawnCrime() {
 
 // 5. MOUSE INTERACTION & CAMERA LOGIC
 canvasArea.addEventListener('mousedown', (e) => {
-    // Left click handling
     if (e.button === 0) {
-        // Translate click coordinates into world coordinates considering zoom and pan
         const mx = (e.clientX - canvasAreaRect.left) / zoom + cameraX / zoom;
         const my = (e.clientY - canvasAreaRect.top) / zoom + cameraY / zoom;
 
         selectedCrime = crimes.find(c => Math.sqrt((mx-c.x)**2 + (my-c.y)**2) < 20);
         if (selectedCrime) {
             menu.style.display = 'block';
-            // Position menu relative to the viewport/canvas-area div
             menu.style.left = (e.clientX - canvasAreaRect.left) + 'px';
             menu.style.top = (e.clientY - canvasAreaRect.top) + 'px';
+        } else if (selectedUnit) {
+            selectedUnit.target = { x: mx, y: my };
+            selectedUnit.status = 'EN ROUTE (Relocated)';
+            addLog(`${selectedUnit.id} moved to new location.`);
+            deselectUnit();
         } else {
             closeDispatch();
         }
-    } 
-    // Right click handling for drag start
-    else if (e.button === 2) {
+    } else if (e.button === 2) {
         isDragging = true;
         dragStartX = e.clientX + cameraX;
         dragStartY = e.clientY + cameraY;
         canvasArea.style.cursor = 'grabbing';
+        deselectUnit();
     }
 });
-
 window.addEventListener('mousemove', (e) => {
-    if (isDragging) {
-        cameraX = dragStartX - e.clientX;
-        cameraY = dragStartY - e.clientY;
-        updateCameraTransform(); // Constrains movement
-    }
+    if (isDragging) { cameraX = dragStartX - e.clientX; cameraY = dragStartY - e.clientY; updateCameraTransform(); }
 });
-
 window.addEventListener('mouseup', (e) => {
-    if (e.button === 2) {
-        isDragging = false;
-        canvasArea.style.cursor = 'crosshair';
-    }
+    if (e.button === 2) { isDragging = false; canvasArea.style.cursor = 'crosshair'; }
 });
-
-// Zoom using mouse wheel
-canvasArea.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    const zoomFactor = -e.deltaY * 0.001;
-    const oldZoom = zoom;
-    zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom + zoomFactor));
-
-    // Calculate new camera position so we zoom towards the cursor position
-    const mouseX = e.clientX - canvasAreaRect.left;
-    const mouseY = e.clientY - canvasAreaRect.top;
-    cameraX += (mouseX / oldZoom) * (oldZoom - zoom);
-    cameraY += (mouseY / oldZoom) * (oldZoom - zoom);
-    
-    updateCameraTransform();
-});
-
-// Prevent default right-click context menu within the canvas area
 canvasArea.addEventListener('contextmenu', (e) => e.preventDefault());
 
+// FIX: New Keyboard Zoom Handling
+window.addEventListener('keydown', (e) => {
+    if (!gameRunning) return;
+    const oldZoom = zoom;
+    if (e.key === 'z') { // Zoom In
+        zoom = Math.min(MAX_ZOOM, zoom + 0.1);
+    } else if (e.key === 'x') { // Zoom Out
+        zoom = Math.max(MIN_ZOOM, zoom - 0.1);
+    }
+    
+    if (oldZoom !== zoom) {
+        // Simple zoom center logic for keyboard input (zoom to center of viewport)
+        const mouseX = canvasAreaRect.width / 2;
+        const mouseY = canvasAreaRect.height / 2;
+        cameraX += (mouseX / oldZoom) * (oldZoom - zoom);
+        cameraY += (mouseY / oldZoom) * (oldZoom - zoom);
+        updateCameraTransform();
+    }
+});
 
-// ... (assignNearest, assignAll, closeDispatch, updateFleetUI, addLog functions remain the same) ...
+
+function selectUnit(unitId) {
+    selectedUnit = units.find(u => u.id === unitId);
+    updateFleetUI();
+    addLog(`Unit ${unitId} selected. Click on map to relocate.`);
+}
+function deselectUnit() { selectedUnit = null; updateFleetUI(); }
 function assignNearest() {
     const idle = units.filter(u => u.status === 'IDLE');
     if (idle.length > 0) {
@@ -294,48 +300,25 @@ function assignNearest() {
             const d2 = Math.sqrt((selectedCrime.x-curr.x)**2 + (selectedCrime.y-curr.y)**2);
             return d1 < d2 ? prev : curr;
         });
-        nearest.target = selectedCrime;
-        nearest.status = 'RESPONDING';
-        addLog(`${nearest.id} responding to call.`);
+        nearest.target = selectedCrime; nearest.status = 'RESPONDING'; addLog(`${nearest.id} responding to call.`);
     }
     closeDispatch();
 }
-function assignAll() {
-    units.filter(u => u.status === 'IDLE').forEach(u => {
-        u.target = selectedCrime;
-        u.status = 'RESPONDING';
-    });
-    addLog(`All available units dispatched.`);
-    closeDispatch();
-}
+function assignAll() { units.filter(u => u.status === 'IDLE').forEach(u => { u.target = selectedCrime; u.status = 'RESPONDING'; }); addLog(`All available units dispatched.`); closeDispatch(); }
 function closeDispatch() { menu.style.display = 'none'; updateFleetUI(); }
 function updateFleetUI() {
     uiFleet.innerHTML = '';
     units.forEach(u => {
         const div = document.createElement('div');
-        div.className = `unit-card ${u.status === 'IDLE' ? 'status-idle' : 'status-busy'}`;
+        div.className = `unit-card ${u.status === 'IDLE' ? 'status-idle' : 'status-busy'} ${selectedUnit === u ? 'selected' : ''}`;
         div.innerHTML = `<b>${u.id}</b><br>${u.type}<br><i>${u.status}</i>`;
+        div.onclick = () => selectUnit(u.id);
         uiFleet.appendChild(div);
     });
 }
-function addLog(t) {
-    const l = document.getElementById('log');
-    l.innerHTML = `> ${t}<br>` + l.innerHTML;
-}
+function addLog(t) { const l = document.getElementById('log'); l.innerHTML = `> ${t}<br>` + l.innerHTML; }
 
 
-// Start
-resize();
-initMap();
-addUnit('Crown Vic', 80, 80);
-addUnit('Crown Vic', 80, 80);
-addUnit('Explorer', 80, 80);
-
-function gameLoop() {
-    draw(); 
-    requestAnimationFrame(gameLoop); 
-}
-gameLoop();
 window.onresize = resize;
 </script>
 </body>
