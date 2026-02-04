@@ -59,8 +59,9 @@ let units = [];
 let crimes = [];
 let buildings = [];
 let selectedCrime = null;
-const GRID_CELL = 20; // Smaller grid for more flexibility
-const SPAWN_AREA = { x: 150, y: 150, w: 700, h: 500 }; // Constrain building generation
+const GRID_CELL = 20;
+const ROAD_WIDTH = 60; // Wide roads
+const SPAWN_AREA = { x: 150, y: 150, w: 700, h: 500 };
 
 function resize() {
     const box = document.getElementById('canvas-area').getBoundingClientRect();
@@ -68,7 +69,6 @@ function resize() {
     canvas.height = box.height;
 }
 
-// Building types and colors
 const BUILDING_SPECS = {
     STATION:    { color: '#1b4d3e', minW: 4, maxW: 4, minH: 4, maxH: 4 },
     PARK:       { color: '#2ecc71', minW: 6, maxW: 10, minH: 4, maxH: 8 },
@@ -77,12 +77,10 @@ const BUILDING_SPECS = {
     APARTMENTS: { color: '#555555', minW: 3, maxW: 8, minH: 3, maxH: 6 }
 };
 
-// 1. MAP GENERATION WITH SPECIFIC COUNTS AND SIZES
 function initMap() {
     buildings = [];
     buildings.push({ x: 40, y: 40, w: 80, h: 80, type: 'STATION', color: '#1b4d3e' });
 
-    // Helper to attempt placing a building
     function placeBuilding(type, count = 1) {
         const spec = BUILDING_SPECS[type];
         for (let i = 0; i < count; i++) {
@@ -96,7 +94,6 @@ function initMap() {
                 const newB = { x, y, w, h, type, color: spec.color };
                 let overlap = false;
                 for (let existingB of buildings) {
-                    // Check for overlap + a little buffer (10px)
                     if (newB.x < existingB.x + existingB.w + 10 &&
                         newB.x + newB.w + 10 > existingB.x &&
                         newB.y < existingB.y + existingB.h + 10 &&
@@ -105,24 +102,21 @@ function initMap() {
                         break;
                     }
                 }
-
                 if (!overlap) {
                     buildings.push(newB);
                     placed = true;
                     break;
                 }
             }
-            if (!placed) addLog(`Warning: Failed to place all ${type}s`);
         }
     }
 
     placeBuilding('PARK', 2);
     placeBuilding('MARKET', 2);
-    placeBuilding('BANK', 1); // One bank for variety
-    placeBuilding('APARTMENTS', 15); // Fill the rest with apartments
+    placeBuilding('BANK', 1);
+    placeBuilding('APARTMENTS', 15);
 }
 
-// 2. VEHICLE MANAGEMENT
 function addUnit(type, x, y) {
     const id = (type === 'Explorer' ? '240-E' : '240-V') + (units.length + 1);
     units.push({ id, type, x, y, status: 'IDLE', target: null, speed: type === 'Explorer' ? 3.5 : 3 });
@@ -140,19 +134,17 @@ function buyVehicle(type, cost) {
     }
 }
 
-// 3. COLLISION DETECTION (AABB)
 function checkCollision(newX, newY, size) {
     for (let b of buildings) {
-        // Added a buffer to collision detection so units stay on the "road"
-        if (newX < b.x + b.w + 5 && newX + size + 5 > b.x && 
-            newY < b.y + b.h + 5 && newY + size + 5 > b.y) {
+        // Reduced buffer to 2px for tighter street driving simulation
+        if (newX < b.x + b.w + 2 && newX + size + 2 > b.x && 
+            newY < b.y + b.h + 2 && newY + size + 2 > b.y) {
             return true;
         }
     }
     return false;
 }
 
-// 4. GAME LOOP & DRAWING
 function update() {
     units.forEach(u => {
         if (u.target) {
@@ -177,20 +169,28 @@ function update() {
             }
         }
     });
-
     if (Math.random() < 0.005) spawnCrime();
 }
 
+// FIX: Drawing detailed streets
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw Roads (basic background grid)
-    ctx.strokeStyle = '#444';
-    ctx.lineWidth = 1;
-    for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke(); }
-    for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width,i); ctx.stroke(); }
+    // 1. Draw solid dark gray roads (base layer)
+    ctx.fillStyle = '#444';
+    for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.fillRect(i - ROAD_WIDTH/2, 0, ROAD_WIDTH, canvas.height); }
+    for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.fillRect(0, i - ROAD_WIDTH/2, canvas.width, ROAD_WIDTH); }
 
-    // Draw Buildings
+    // 2. Draw dashed yellow center lines
+    ctx.strokeStyle = '#FFD700'; // LASD Gold/Yellow
+    ctx.lineWidth = 2;
+    ctx.setLineDash([10, 10]);
+    for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke(); }
+    for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(canvas.width, i); ctx.stroke(); }
+    ctx.setLineDash([]); // Reset line dash for other drawings
+
+
+    // 3. Draw Buildings (they now sit on grass/empty land between roads)
     buildings.forEach(b => {
         ctx.fillStyle = b.color;
         ctx.fillRect(b.x, b.y, b.w, b.h);
@@ -201,14 +201,14 @@ function draw() {
         ctx.fillText(b.type, b.x + 5, b.y + 15);
     });
 
-    // Draw Crimes
+    // 4. Draw Crimes
     crimes.forEach(c => {
         ctx.fillStyle = "red";
         ctx.beginPath(); ctx.arc(c.x, c.y, 10, 0, Math.PI*2); ctx.fill();
         ctx.strokeStyle = "white"; ctx.stroke();
     });
 
-    // Draw Units
+    // 5. Draw Units
     units.forEach(u => {
         ctx.fillStyle = u.type === 'Explorer' ? '#fff' : 'var(--lasd-gold)';
         ctx.fillRect(u.x-7, u.y-7, 14, 14);
@@ -219,7 +219,20 @@ function draw() {
     requestAnimationFrame(draw);
 }
 
-// 5. DISPATCH INTERFACE (uses functions defined earlier)
+function spawnCrime() {
+    for (let attempts = 0; attempts < 50; attempts++) {
+        const x = SPAWN_AREA.x + Math.random() * (SPAWN_AREA.w - 50);
+        const y = SPAWN_AREA.y + Math.random() * (SPAWN_AREA.h - 50);
+        if (!checkCollision(x, y, 20)) {
+            crimes.push({ x, y });
+            addLog(`Crime spawned at ${Math.floor(x)}, ${Math.floor(y)}`);
+            return;
+        }
+    }
+    addLog("Warning: Could not find clear spot for crime.");
+}
+
+// 5. DISPATCH INTERFACE
 canvas.addEventListener('mousedown', (e) => {
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
@@ -234,12 +247,31 @@ canvas.addEventListener('mousedown', (e) => {
     }
 });
 
-function spawnCrime() {
-    // Only spawn crimes in valid locations (e.g., not inside buildings)
-    const x = SPAWN_AREA.x + Math.random() * (SPAWN_AREA.w - 50);
-    const y = SPAWN_AREA.y + Math.random() * (SPAWN_AREA.h - 50);
-    if (!checkCollision(x, y, 20)) crimes.push({ x, y });
+function assignNearest() {
+    const idle = units.filter(u => u.status === 'IDLE');
+    if (idle.length > 0) {
+        let nearest = idle.reduce((prev, curr) => {
+            const d1 = Math.sqrt((selectedCrime.x-prev.x)**2 + (selectedCrime.y-prev.y)**2);
+            const d2 = Math.sqrt((selectedCrime.x-curr.x)**2 + (selectedCrime.y-curr.y)**2);
+            return d1 < d2 ? prev : curr;
+        });
+        nearest.target = selectedCrime;
+        nearest.status = 'RESPONDING';
+        addLog(`${nearest.id} responding to call.`);
+    }
+    closeDispatch();
 }
+
+function assignAll() {
+    units.filter(u => u.status === 'IDLE').forEach(u => {
+        u.target = selectedCrime;
+        u.status = 'RESPONDING';
+    });
+    addLog(`All available units dispatched.`);
+    closeDispatch();
+}
+
+function closeDispatch() { menu.style.display = 'none'; updateFleetUI(); }
 
 function updateFleetUI() {
     const container = document.getElementById('ui-fleet');
