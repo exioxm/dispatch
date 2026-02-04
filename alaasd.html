@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>LASD: Dispatch Advanced</title>
+    <style>
+        :root { --lasd-tan: #D2B48C; --lasd-gold: #FFD700; --lasd-green: #1b4d3e; }
+        body { margin: 0; overflow: hidden; font-family: 'Arial', sans-serif; background: #222; color: white; }
+        
+        #game-container { display: flex; height: 100vh; width: 100vw; }
+        #canvas-area { position: relative; flex-grow: 1; height: calc(100vh - 120px); overflow: hidden; cursor: crosshair; }
+        canvas { background: #333; display: block; }
+        #ui-shop { width: 240px; background: #2d3436; border-left: 3px solid var(--lasd-gold); padding: 15px; box-sizing: border-box; }
+        .shop-btn { width: 100%; padding: 12px; margin: 10px 0; background: var(--lasd-gold); border: 2px solid black; font-weight: bold; cursor: pointer; }
+        #ui-fleet { position: absolute; bottom: 0; left: 0; width: 100%; height: 120px; background: #111; border-top: 3px solid var(--lasd-gold); display: flex; padding: 10px; overflow-x: auto; box-sizing: border-box; }
+        .unit-card { min-width: 140px; background: #333; border: 1px solid #555; margin-right: 10px; padding: 8px; font-size: 12px; border-radius: 4px; }
+        .status-idle { border-left: 5px solid #2ecc71; }
+        .status-busy { border-left: 5px solid #e74c3c; }
+        #dispatch-menu { position: absolute; display: none; background: rgba(0,0,0,0.95); border: 2px solid var(--lasd-gold); padding: 10px; z-index: 100; border-radius: 5px; }
+        .dispatch-btn { display: block; width: 100%; margin: 5px 0; padding: 8px; background: #444; color: white; border: 1px solid var(--lasd-gold); cursor: pointer; }
+        .stat { color: var(--lasd-gold); font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div style="flex-grow:1; position:relative;">
+        <div id="canvas-area">
+            <canvas id="gameCanvas"></canvas>
+            <div id="dispatch-menu">
+                <div style="font-size:12px; margin-bottom:5px; color:var(--lasd-gold)">DISPATCH UNIT:</div>
+                <button class="dispatch-btn" onclick="assignNearest()">Nearest Unit</button>
+                <button class="dispatch-btn" onclick="assignAll()">Send All Units</button>
+                <button class="dispatch-btn" onclick="closeDispatch()" style="background:red">Cancel</button>
+            </div>
+        </div>
+        
+        <div id="ui-fleet"></div>
+    </div>
+
+    <div id="ui-shop">
+        <h2 style="color: var(--lasd-gold); margin-top:0;">LASD HQ</h2>
+        <p>Budget: $<span id="funds" class="stat">5000</span></p>
+        <hr>
+        <p>AVAILABLE VEHICLES:</p>
+        <button class="shop-btn" onclick="buyVehicle('Crown Vic', 1200)">Crown Victoria ($1200)</button>
+        <button class="shop-btn" onclick="buyVehicle('Explorer', 2500)">Ford Explorer ($2500)</button>
+        <div id="log" style="font-size:11px; margin-top:20px; height:150px; overflow-y:auto; color:#ccc;"></div>
+    </div>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const menu = document.getElementById('dispatch-menu');
+
+let funds = 5000;
+let units = [];
+let crimes = [];
+let buildings = [];
+let selectedCrime = null;
+const GRID_CELL = 20; // Smaller grid for more flexibility
+const SPAWN_AREA = { x: 150, y: 150, w: 700, h: 500 }; // Constrain building generation
+
+function resize() {
+    const box = document.getElementById('canvas-area').getBoundingClientRect();
+    canvas.width = box.width;
+    canvas.height = box.height;
+}
+
+// Building types and colors
+const BUILDING_SPECS = {
+    STATION:    { color: '#1b4d3e', minW: 4, maxW: 4, minH: 4, maxH: 4 },
+    PARK:       { color: '#2ecc71', minW: 6, maxW: 10, minH: 4, maxH: 8 },
+    BANK:       { color: '#f1c40f', minW: 3, maxW: 5, minH: 3, maxH: 5 },
+    MARKET:     { color: '#9b59b6', minW: 4, maxW: 6, minH: 4, maxH: 6 },
+    APARTMENTS: { color: '#555555', minW: 3, maxW: 8, minH: 3, maxH: 6 }
+};
+
+// 1. MAP GENERATION WITH SPECIFIC COUNTS AND SIZES
+function initMap() {
+    buildings = [];
+    buildings.push({ x: 40, y: 40, w: 80, h: 80, type: 'STATION', color: '#1b4d3e' });
+
+    // Helper to attempt placing a building
+    function placeBuilding(type, count = 1) {
+        const spec = BUILDING_SPECS[type];
+        for (let i = 0; i < count; i++) {
+            let placed = false;
+            for (let attempts = 0; attempts < 50; attempts++) {
+                const w = (Math.floor(Math.random() * (spec.maxW - spec.minW + 1)) + spec.minW) * GRID_CELL;
+                const h = (Math.floor(Math.random() * (spec.maxH - spec.minH + 1)) + spec.minH) * GRID_CELL;
+                const x = SPAWN_AREA.x + Math.random() * (SPAWN_AREA.w - w);
+                const y = SPAWN_AREA.y + Math.random() * (SPAWN_AREA.h - h);
+                
+                const newB = { x, y, w, h, type, color: spec.color };
+                let overlap = false;
+                for (let existingB of buildings) {
+                    // Check for overlap + a little buffer (10px)
+                    if (newB.x < existingB.x + existingB.w + 10 &&
+                        newB.x + newB.w + 10 > existingB.x &&
+                        newB.y < existingB.y + existingB.h + 10 &&
+                        newB.y + newB.h + 10 > existingB.y) {
+                        overlap = true;
+                        break;
+                    }
+                }
+
+                if (!overlap) {
+                    buildings.push(newB);
+                    placed = true;
+                    break;
+                }
+            }
+            if (!placed) addLog(`Warning: Failed to place all ${type}s`);
+        }
+    }
+
+    placeBuilding('PARK', 2);
+    placeBuilding('MARKET', 2);
+    placeBuilding('BANK', 1); // One bank for variety
+    placeBuilding('APARTMENTS', 15); // Fill the rest with apartments
+}
+
+// 2. VEHICLE MANAGEMENT
+function addUnit(type, x, y) {
+    const id = (type === 'Explorer' ? '240-E' : '240-V') + (units.length + 1);
+    units.push({ id, type, x, y, status: 'IDLE', target: null, speed: type === 'Explorer' ? 3.5 : 3 });
+    updateFleetUI();
+}
+
+function buyVehicle(type, cost) {
+    if (funds >= cost) {
+        funds -= cost;
+        document.getElementById('funds').innerText = funds;
+        addUnit(type, 80, 80);
+        addLog(`Purchased ${type}: ${units[units.length-1].id}`);
+    } else {
+        addLog("Not enough funds!");
+    }
+}
+
+// 3. COLLISION DETECTION (AABB)
+function checkCollision(newX, newY, size) {
+    for (let b of buildings) {
+        // Added a buffer to collision detection so units stay on the "road"
+        if (newX < b.x + b.w + 5 && newX + size + 5 > b.x && 
+            newY < b.y + b.h + 5 && newY + size + 5 > b.y) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 4. GAME LOOP & DRAWING
+function update() {
+    units.forEach(u => {
+        if (u.target) {
+            const dx = u.target.x - u.x;
+            const dy = u.target.y - u.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            if (dist > 10) {
+                let vx = (dx / dist) * u.speed;
+                let vy = (dy / dist) * u.speed;
+
+                if (!checkCollision(u.x + vx, u.y, 14)) u.x += vx;
+                if (!checkCollision(u.x, u.y + vy, 14)) u.y += vy;
+            } else {
+                u.status = 'ON SCENE';
+                setTimeout(() => {
+                    crimes = crimes.filter(c => c !== u.target);
+                    u.target = null;
+                    u.status = 'IDLE';
+                    updateFleetUI();
+                }, 5000);
+            }
+        }
+    });
+
+    if (Math.random() < 0.005) spawnCrime();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw Roads (basic background grid)
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 1;
+    for(let i=0; i<canvas.width; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke(); }
+    for(let i=0; i<canvas.height; i+=GRID_CELL*5) { ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width,i); ctx.stroke(); }
+
+    // Draw Buildings
+    buildings.forEach(b => {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = "black";
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.fillStyle = "white";
+        ctx.font = "10px Arial";
+        ctx.fillText(b.type, b.x + 5, b.y + 15);
+    });
+
+    // Draw Crimes
+    crimes.forEach(c => {
+        ctx.fillStyle = "red";
+        ctx.beginPath(); ctx.arc(c.x, c.y, 10, 0, Math.PI*2); ctx.fill();
+        ctx.strokeStyle = "white"; ctx.stroke();
+    });
+
+    // Draw Units
+    units.forEach(u => {
+        ctx.fillStyle = u.type === 'Explorer' ? '#fff' : 'var(--lasd-gold)';
+        ctx.fillRect(u.x-7, u.y-7, 14, 14);
+        ctx.strokeRect(u.x-7, u.y-7, 14, 14);
+    });
+
+    update();
+    requestAnimationFrame(draw);
+}
+
+// 5. DISPATCH INTERFACE (uses functions defined earlier)
+canvas.addEventListener('mousedown', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    selectedCrime = crimes.find(c => Math.sqrt((mx-c.x)**2 + (my-c.y)**2) < 20);
+    if (selectedCrime) {
+        menu.style.display = 'block';
+        menu.style.left = mx + 'px';
+        menu.style.top = my + 'px';
+    } else {
+        closeDispatch();
+    }
+});
+
+function spawnCrime() {
+    // Only spawn crimes in valid locations (e.g., not inside buildings)
+    const x = SPAWN_AREA.x + Math.random() * (SPAWN_AREA.w - 50);
+    const y = SPAWN_AREA.y + Math.random() * (SPAWN_AREA.h - 50);
+    if (!checkCollision(x, y, 20)) crimes.push({ x, y });
+}
+
+function updateFleetUI() {
+    const container = document.getElementById('ui-fleet');
+    container.innerHTML = '';
+    units.forEach(u => {
+        const div = document.createElement('div');
+        div.className = `unit-card ${u.status === 'IDLE' ? 'status-idle' : 'status-busy'}`;
+        div.innerHTML = `<b>${u.id}</b><br>${u.type}<br><i>${u.status}</i>`;
+        container.appendChild(div);
+    });
+}
+
+function addLog(t) {
+    const l = document.getElementById('log');
+    l.innerHTML = `> ${t}<br>` + l.innerHTML;
+}
+
+// Start
+resize();
+initMap();
+addUnit('Crown Vic', 80, 80);
+addUnit('Crown Vic', 80, 80);
+addUnit('Explorer', 80, 80);
+draw();
+window.onresize = resize;
+</script>
+</body>
+</html>
