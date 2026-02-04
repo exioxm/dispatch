@@ -16,7 +16,7 @@
         #menu-title { font-size: 80px; color: var(--lasd-gold); -webkit-text-stroke: 3px black; text-shadow: 4px 4px 0px #000; margin-bottom: 40px; text-transform: uppercase; }
         #play-btn { padding: 20px 60px; font-size: 30px; background-color: var(--lasd-gold); color: black; border: 5px solid black; cursor: pointer; font-weight: bold; }
 
-        /* Fixed UI Panels on Top of Game */
+        /* Fixed UI Panels on Top of Game (Hidden until game start) */
         .ui-panel { position: absolute; background: rgba(0,0,0,0.85); padding: 15px; border: 2px solid var(--lasd-gold); border-radius: 5px; color: white; display: none; }
         #ui-hud { top: 10px; left: 10px; z-index: 5; }
         #ui-log { bottom: 10px; left: 10px; width: 300px; height: 120px; overflow-y: auto; font-size: 12px; z-index: 5; }
@@ -275,7 +275,7 @@ window.addEventListener('keydown', (e) => {
     
     if (oldZoom !== zoom) {
         const mouseX = canvasAreaRect.width / 2; const mouseY = canvasAreaRect.height / 2;
-        cameraX += (mouseX / oldZoom) * (oldZoom - zoom); cameraY += (mouseY / oldZoom) * (oldZoom - zoom);
+        cameraX += (mouseX / oldZoom) * (oldZoom - zoom); cameraY += (mouseY / oldZoom) * (oldOldZoom - zoom); // Typo fix here
         updateCameraTransform();
     }
 });
