@@ -112,6 +112,8 @@ function startGame() {
 function resize() {
     canvasAreaRect = document.getElementById('canvas-area').getBoundingClientRect();
     canvas.width = MAP_WIDTH; canvas.height = MAP_HEIGHT;
+    // Set an initial zoom level that fits the map width in the view
+    zoom = Math.min(1.0, canvasAreaRect.width / MAP_WIDTH); 
     updateCameraTransform();
     document.getElementById('funds').innerText = funds;
 }
@@ -265,22 +267,15 @@ window.addEventListener('mouseup', (e) => {
 });
 canvasArea.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// FIX: New Keyboard Zoom Handling
 window.addEventListener('keydown', (e) => {
     if (!gameRunning) return;
     const oldZoom = zoom;
-    if (e.key === 'z') { // Zoom In
-        zoom = Math.min(MAX_ZOOM, zoom + 0.1);
-    } else if (e.key === 'x') { // Zoom Out
-        zoom = Math.max(MIN_ZOOM, zoom - 0.1);
-    }
+    if (e.key === 'z') { zoom = Math.min(MAX_ZOOM, zoom + 0.1); } 
+    else if (e.key === 'x') { zoom = Math.max(MIN_ZOOM, zoom - 0.1); }
     
     if (oldZoom !== zoom) {
-        // Simple zoom center logic for keyboard input (zoom to center of viewport)
-        const mouseX = canvasAreaRect.width / 2;
-        const mouseY = canvasAreaRect.height / 2;
-        cameraX += (mouseX / oldZoom) * (oldZoom - zoom);
-        cameraY += (mouseY / oldZoom) * (oldZoom - zoom);
+        const mouseX = canvasAreaRect.width / 2; const mouseY = canvasAreaRect.height / 2;
+        cameraX += (mouseX / oldZoom) * (oldZoom - zoom); cameraY += (mouseY / oldZoom) * (oldZoom - zoom);
         updateCameraTransform();
     }
 });
